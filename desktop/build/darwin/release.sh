@@ -40,18 +40,26 @@ done
 
 if [ -n "$identity" ]; then
   codesign --force --timestamp --sign "$identity" "$dmg"
-  if [ -n "${APPLE_ID:-}" ]; then
-    out=$(xcrun notarytool submit "$dmg" --apple-id "$APPLE_ID" --team-id "$APPLE_TEAM_ID" \
-      --password "$APPLE_APP_PASSWORD" --wait --output-format json)
+  # Notarize with an App Store Connect API key (preferred) or an Apple ID + app-specific password.
+  auth=()
+  if [ -n "${APPLE_API_KEY_P8_BASE64:-}" ]; then
+    echo "$APPLE_API_KEY_P8_BASE64" | base64 --decode > "$RUNNER_TEMP/notary.p8"
+    auth=(--key "$RUNNER_TEMP/notary.p8" --key-id "$APPLE_API_KEY_ID" --issuer "$APPLE_API_ISSUER")
+  elif [ -n "${APPLE_ID:-}" ]; then
+    auth=(--apple-id "$APPLE_ID" --team-id "$APPLE_TEAM_ID" --password "$APPLE_APP_PASSWORD")
+  fi
+  if [ ${#auth[@]} -gt 0 ]; then
+    out=$(xcrun notarytool submit "$dmg" "${auth[@]}" --wait --output-format json)
     echo "$out"
     if ! echo "$out" | grep -q '"status" *: *"Accepted"'; then
       id=$(echo "$out" | sed -n 's/.*"id" *: *"\([^"]*\)".*/\1/p')
-      [ -n "$id" ] && xcrun notarytool log "$id" --apple-id "$APPLE_ID" --team-id "$APPLE_TEAM_ID" --password "$APPLE_APP_PASSWORD" || true
+      [ -n "$id" ] && xcrun notarytool log "$id" "${auth[@]}" || true
       echo "::error::notarization was not accepted"; exit 1
     fi
     xcrun stapler staple "$dmg"
+    rm -f "$RUNNER_TEMP/notary.p8"
   else
-    echo "::warning::APPLE_ID is not set: signed but not notarized"
+    echo "::warning::no notarization credentials (APPLE_API_KEY_* or APPLE_ID): signed but not notarized"
   fi
 fi
 echo "built $dmg"
