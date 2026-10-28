@@ -1,0 +1,8 @@
+profiles.toml
+secrets/*
+!secrets/*.example
+__pycache__/
+*.pvt
+*.key
+vpn.pub
+.DS_Store

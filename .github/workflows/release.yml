@@ -1,0 +1,135 @@
+name: Release
+
+# Push a tag like v0.1.0 to build the installers and publish a GitHub release.
+# Run it by hand (Actions -> Release -> Run workflow) to build the installers as artifacts without releasing.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to stamp, without the v (e.g. 0.1.0)"
+        required: true
+
+permissions:
+  contents: write
+
+env:
+  WAILS_VERSION: v3.0.0
+
+jobs:
+  desktop:
+    name: desktop (${{ matrix.target }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { target: macos, os: macos-14 }
+          - { target: windows, os: windows-latest }
+          - { target: linux, os: ubuntu-24.04 }
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+        working-directory: desktop
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: desktop/go.mod
+          cache-dependency-path: desktop/go.sum
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: desktop/frontend/package-lock.json
+
+      - name: Set version
+        run: |
+          v="${{ inputs.version }}"
+          [ -n "$v" ] || v="${GITHUB_REF_NAME#v}"
+          echo "VERSION=$v" >> "$GITHUB_ENV"
+          ./build/set-version.sh "$v"
+
+      - name: Install Wails
+        run: go install github.com/wailsapp/wails/v3/cmd/wails3@${{ env.WAILS_VERSION }}
+
+      - name: Test core
+        run: go test ./internal/core
+
+      # ---- macOS: universal .app -> signed, notarized .dmg ----
+      - name: Build (macOS)
+        if: matrix.target == 'macos'
+        run: wails3 task darwin:package:universal
+
+      - name: Sign, notarize and make the .dmg
+        if: matrix.target == 'macos'
+        env:
+          MACOS_CERT_P12_BASE64: ${{ secrets.MACOS_CERT_P12_BASE64 }}
+          MACOS_CERT_PASSWORD: ${{ secrets.MACOS_CERT_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+        run: ./build/darwin/release.sh
+
+      # ---- Windows: NSIS installer ----
+      - name: Build installer (Windows)
+        if: matrix.target == 'windows'
+        run: |
+          export PATH="$PATH:/c/Program Files (x86)/NSIS"
+          command -v makensis >/dev/null || { choco install nsis -y --no-progress && export PATH="$PATH:/c/Program Files (x86)/NSIS"; }
+          wails3 task windows:package
+          mv bin/porthole-desktop-amd64-installer.exe "bin/Porthole-windows-amd64-setup.exe"
+
+      # ---- Linux: AppImage, deb, rpm ----
+      - name: Install Linux build dependencies
+        if: matrix.target == 'linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential pkg-config libgtk-3-dev libwebkit2gtk-4.1-dev libfuse2t64 file rpm
+
+      - name: Build packages (Linux)
+        if: matrix.target == 'linux'
+        run: |
+          wails3 task linux:package
+          ls -la bin
+          appimage=$(ls bin/*.AppImage | head -1)
+          mv "$appimage" "bin/Porthole-linux-amd64.AppImage"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: porthole-${{ matrix.target }}
+          if-no-files-found: error
+          path: |
+            desktop/bin/*.dmg
+            desktop/bin/*-setup.exe
+            desktop/bin/*.AppImage
+            desktop/bin/*.deb
+            desktop/bin/*.rpm
+
+  release:
+    needs: desktop
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Add the CLI and checksums
+        run: |
+          cp porthole profiles.example.toml dist/
+          cd dist && sha256sum * > SHA256SUMS.txt && ls -la
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" dist/* \
+            --title "Porthole ${GITHUB_REF_NAME#v}" \
+            --generate-notes

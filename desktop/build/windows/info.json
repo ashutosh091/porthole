@@ -1,0 +1,15 @@
+{
+	"fixed": {
+		"file_version": "0.1.0"
+	},
+	"info": {
+		"0409": {
+			"ProductVersion": "0.1.0",
+			"CompanyName": "Porthole",
+			"FileDescription": "Open a browser window through another region",
+			"LegalCopyright": "(c) 2026 The Porthole authors",
+			"ProductName": "Porthole",
+			"Comments": "Launch browsers through a chosen region without changing the system network"
+		}
+	}
+}

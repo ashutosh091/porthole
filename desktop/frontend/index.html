@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8"/>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+    <link rel="stylesheet" href="/style.css"/>
+    <title>Porthole</title>
+</head>
+<body>
+<header class="titlebar">
+    <div class="brand">
+        <span class="brand-name">Porthole</span>
+        <span class="brand-sub">browser regions</span>
+    </div>
+    <div class="toolbar">
+        <button class="btn" id="import" title="Import WireGuard .conf files">Import .conf</button>
+        <button class="btn" id="add-ssh" title="Add one of your servers">Add server</button>
+        <button class="btn icon" id="reload" title="Reload profiles.toml" aria-label="Reload">↻</button>
+    </div>
+</header>
+
+<main>
+    <div id="banners"></div>
+    <section id="profiles" aria-live="polite"></section>
+    <footer class="foot">Profiles: <code id="config-path"></code> · shared with the <code>porthole</code> CLI</footer>
+</main>
+
+<dialog id="ssh-dialog">
+    <form method="dialog" id="ssh-form">
+        <h2 id="ssh-title">Add server</h2>
+        <p class="hint">An SSH tunnel to one of your servers. Nothing is installed on the server.</p>
+        <label>Name <input name="name" required pattern="[a-z0-9_\-]+" placeholder="us-east" autocomplete="off"/></label>
+        <label>Host <input name="host" required placeholder="1.2.3.4 or ~/.ssh/config alias" autocomplete="off"/></label>
+        <label>User <input name="user" placeholder="from ~/.ssh/config if empty" autocomplete="off"/></label>
+        <label>Private key
+            <span class="row"><input name="keyPath" placeholder="ssh-agent / ~/.ssh/config if empty" autocomplete="off"/>
+            <button type="button" class="btn" id="pick-key">Choose…</button></span>
+        </label>
+        <div class="two">
+            <label>Country <input name="expectCountry" maxlength="2" placeholder="US" autocomplete="off"/></label>
+            <label>Timezone <input name="tz" placeholder="America/New_York" autocomplete="off"/></label>
+        </div>
+        <p class="error" id="ssh-error"></p>
+        <menu>
+            <button type="button" class="btn" value="cancel" data-close>Cancel</button>
+            <button type="submit" class="btn primary" value="save">Save</button>
+        </menu>
+    </form>
+</dialog>
+
+<dialog id="edit-dialog">
+    <form method="dialog" id="edit-form">
+        <h2>Edit <span id="edit-name"></span></h2>
+        <label>Name <input name="name" required pattern="[a-z0-9_\-]+" autocomplete="off"/></label>
+        <div class="two">
+            <label>Country <input name="expectCountry" maxlength="2" autocomplete="off"/></label>
+            <label>Timezone <input name="tz" autocomplete="off"/></label>
+        </div>
+        <div class="two">
+            <label>Language <input name="lang" placeholder="en-US" autocomplete="off"/></label>
+            <label>Local port <input name="port" type="number" min="1024" max="65535" required/></label>
+        </div>
+        <p class="hint">The browser's clock follows the timezone; launch refuses if the exit is not in the country.</p>
+        <p class="error" id="edit-error"></p>
+        <menu>
+            <button type="button" class="btn" value="cancel" data-close>Cancel</button>
+            <button type="submit" class="btn primary" value="save">Save</button>
+        </menu>
+    </form>
+</dialog>
+
+<div id="toast" role="status"></div>
+<script type="module" src="/src/main.ts"></script>
+</body>
+</html>

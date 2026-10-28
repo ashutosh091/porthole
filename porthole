@@ -1,0 +1,719 @@
+#!/usr/bin/env python3
+"""porthole: launch a browser instance that exits through a chosen region, leaving the rest of the Mac alone.
+
+Each profile is a local proxy port:
+  ssh      -> `ssh -N -D 127.0.0.1:<port> <host>` (SOCKS5 through one of your servers)
+  gluetun  -> a qmcgaw/gluetun container (any gluetun VPN provider, or a custom WireGuard .conf) exposing its HTTP proxy
+
+Chrome, Brave and Firefox get the proxy per instance. Safari can only use the system proxy, so it gets a
+domain-scoped PAC that is set on launch and restored when Safari quits.
+"""
+
+import argparse
+import json
+import os
+import re
+import shlex
+import shutil
+import signal
+import socket
+import subprocess
+import sys
+import threading
+import time
+import tomllib
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+
+STATE = Path(os.environ.get("PORTHOLE_HOME", Path.home() / ".porthole"))
+RUN = STATE / "run"
+RESTORE_FILE = STATE / "safari-restore.json"
+
+BROWSERS = {
+    "chrome": "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+    "brave": "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser",
+    "firefox": "/Applications/Firefox.app/Contents/MacOS/firefox",
+    "safari": "/Applications/Safari.app",
+}
+
+DEFAULT_GLUETUN_IMAGE = "qmcgaw/gluetun:v3"
+DEFAULT_PAC_PORT = 18080
+IPINFO = "https://ipinfo.io/json"
+IPAPI = "http://ip-api.com/json/?fields=countryCode"
+
+
+class PortholeError(Exception):
+    pass
+
+
+def log(msg):
+    print(f"porthole: {msg}", file=sys.stderr)
+
+
+# ---------------------------------------------------------------- config
+
+def config_path():
+    candidates = []
+    if os.environ.get("PORTHOLE_CONFIG"):
+        candidates.append(Path(os.environ["PORTHOLE_CONFIG"]))
+    candidates.append(Path(__file__).resolve().parent / "profiles.toml")
+    candidates.append(Path.home() / ".config" / "porthole" / "profiles.toml")
+    for c in candidates:
+        if c.exists():
+            return c
+    raise PortholeError("no profiles.toml found (copy profiles.example.toml to profiles.toml next to porthole, "
+                    "or set PORTHOLE_CONFIG)")
+
+
+def load_config():
+    path = config_path()
+    with open(path, "rb") as f:
+        cfg = tomllib.load(f)
+    cfg["_dir"] = path.parent
+    profiles = cfg.get("profile", {})
+    seen = {}
+    for name, p in profiles.items():
+        if p.get("type") not in ("ssh", "gluetun"):
+            raise PortholeError(f"profile {name}: type must be 'ssh' or 'gluetun'")
+        if "port" not in p:
+            raise PortholeError(f"profile {name}: missing port")
+        if p["port"] in seen:
+            raise PortholeError(f"profiles {seen[p['port']]} and {name} both use port {p['port']}")
+        seen[p["port"]] = name
+        p["name"] = name
+    return cfg
+
+
+def get_profile(cfg, name):
+    try:
+        return cfg["profile"][name]
+    except KeyError:
+        known = ", ".join(cfg.get("profile", {})) or "none"
+        raise PortholeError(f"unknown profile '{name}' (known: {known})")
+
+
+def proxy_url(p, for_curl=False):
+    if p["type"] == "ssh":
+        # socks5h makes curl resolve names at the far end, like the browsers do.
+        return f"{'socks5h' if for_curl else 'socks5'}://127.0.0.1:{p['port']}"
+    return f"http://127.0.0.1:{p['port']}"
+
+
+# ---------------------------------------------------------------- helpers
+
+def port_open(port, host="127.0.0.1"):
+    with socket.socket() as s:
+        s.settimeout(0.5)
+        return s.connect_ex((host, port)) == 0
+
+
+def pid_alive(pid):
+    try:
+        os.kill(pid, 0)
+        return True
+    except (ProcessLookupError, PermissionError):
+        return False
+
+
+def run(cmd, check=True, **kw):
+    r = subprocess.run(cmd, capture_output=True, text=True, **kw)
+    if check and r.returncode != 0:
+        raise PortholeError(f"{' '.join(cmd)} failed: {(r.stderr or r.stdout).strip()}")
+    return r
+
+
+def pidfile(p):
+    return RUN / f"{p['name']}.pid"
+
+
+def container(p):
+    return f"porthole-{p['name']}"
+
+
+# ---------------------------------------------------------------- tunnels
+
+def is_up(p):
+    if p["type"] == "ssh":
+        pf = pidfile(p)
+        if not pf.exists():
+            return False
+        return pid_alive(int(pf.read_text())) and port_open(p["port"])
+    r = run(["docker", "inspect", "-f", "{{.State.Running}}", container(p)], check=False)
+    return r.stdout.strip() == "true"
+
+
+def up(cfg, p):
+    if is_up(p):
+        return
+    if port_open(p["port"]):
+        raise PortholeError(f"port {p['port']} is already in use by something else")
+    RUN.mkdir(parents=True, exist_ok=True)
+    if p["type"] == "ssh":
+        up_ssh(p)
+    else:
+        up_gluetun(cfg, p)
+
+
+def up_ssh(p):
+    target = f"{p['user']}@{p['host']}" if p.get("user") else p["host"]
+    cmd = ["ssh", "-N", "-D", f"127.0.0.1:{p['port']}",
+           "-o", "ExitOnForwardFailure=yes", "-o", "ServerAliveInterval=30", "-o", "ServerAliveCountMax=3",
+           "-o", "BatchMode=yes", *p.get("ssh_args", []), target]
+    logf = RUN / f"{p['name']}.log"
+    with open(logf, "w") as out:
+        proc = subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=out, stderr=out, start_new_session=True)
+    pidfile(p).write_text(str(proc.pid))
+    for _ in range(60):
+        if proc.poll() is not None:
+            pidfile(p).unlink(missing_ok=True)
+            raise PortholeError(f"ssh to {target} exited: {logf.read_text().strip()}")
+        if port_open(p["port"]):
+            log(f"{p['name']}: ssh tunnel to {target} up on 127.0.0.1:{p['port']}")
+            return
+        time.sleep(0.25)
+    proc.terminate()
+    pidfile(p).unlink(missing_ok=True)
+    raise PortholeError(f"ssh tunnel to {target} did not open port {p['port']} within 15s")
+
+
+def up_gluetun(cfg, p):
+    if not shutil.which("docker") or run(["docker", "info"], check=False).returncode != 0:
+        raise PortholeError("Docker is not running (start Docker Desktop) - gluetun profiles need it")
+    run(["docker", "rm", "-f", container(p)], check=False)
+    env = {
+        "VPN_SERVICE_PROVIDER": p.get("provider", "custom"),
+        "VPN_TYPE": p.get("vpn", "wireguard"),
+        "HTTPPROXY": "on",
+        "HTTPPROXY_LISTENING_ADDRESS": ":8888",
+        "TZ": p.get("tz", "UTC"),
+    }
+    for key, opt in (("SERVER_COUNTRIES", "countries"), ("SERVER_CITIES", "cities"),
+                     ("SERVER_HOSTNAMES", "hostnames"), ("SERVER_REGIONS", "regions")):
+        if p.get(opt):
+            env[key] = p[opt]
+    env.update({k: str(v) for k, v in p.get("env", {}).items()})
+    cmd = ["docker", "run", "-d", "--name", container(p), "--label", "porthole=1",
+           "--cap-add", "NET_ADMIN", "--device", "/dev/net/tun",
+           "-p", f"127.0.0.1:{p['port']}:8888"]
+    for k, v in env.items():
+        cmd += ["-e", f"{k}={v}"]
+    if p.get("env_file"):
+        ef = cfg["_dir"] / p["env_file"]
+        if not ef.exists():
+            raise PortholeError(f"{p['name']}: env_file {ef} not found")
+        cmd += ["--env-file", str(ef)]
+    if p.get("wg_conf"):
+        # Exact server from a provider's downloaded .conf; gluetun's built-in server lists go stale.
+        wg_env = RUN / f"{p['name']}.env"
+        wg_env.write_text("".join(f"{k}={v}\n" for k, v in wg_conf_env(cfg["_dir"] / p["wg_conf"]).items()))
+        wg_env.chmod(0o600)
+        cmd += ["--env-file", str(wg_env)]
+    cmd.append(cfg.get("defaults", {}).get("gluetun_image", DEFAULT_GLUETUN_IMAGE))
+    run(cmd)
+    log(f"{p['name']}: gluetun container {container(p)} started, waiting for the VPN...")
+    deadline = time.monotonic() + 90
+    while time.monotonic() < deadline:
+        if not is_up(p):
+            tail = run(["docker", "logs", "--tail", "20", container(p)], check=False)
+            raise PortholeError(f"gluetun exited:\n{tail.stdout}{tail.stderr}")
+        if exit_info(p, timeout=5):
+            log(f"{p['name']}: VPN up, HTTP proxy on 127.0.0.1:{p['port']}")
+            return
+        time.sleep(1)
+    tail = run(["docker", "logs", "--tail", "8", container(p)], check=False)
+    run(["docker", "rm", "-f", container(p)], check=False)
+    raise PortholeError(f"gluetun did not connect within 90s (container removed). Last log lines:\n{tail.stdout}{tail.stderr}")
+
+
+def wg_conf_env(path):
+    """Turn a WireGuard .conf into gluetun custom-provider env, resolving the endpoint host to an IP."""
+    if not path.exists():
+        raise PortholeError(f"wg_conf {path} not found")
+    vals = {}
+    for line in path.read_text().splitlines():
+        if "=" in line and not line.lstrip().startswith(("#", "[")):
+            k, v = line.split("=", 1)
+            vals[k.strip().lower()] = v.strip()
+    try:
+        host, port = vals["endpoint"].rsplit(":", 1)
+        env = {"WIREGUARD_PRIVATE_KEY": vals["privatekey"], "WIREGUARD_PUBLIC_KEY": vals["publickey"],
+               "WIREGUARD_ADDRESSES": vals["address"].split(",")[0].strip()}
+    except KeyError as e:
+        raise PortholeError(f"{path}: missing {e.args[0]}")
+    try:
+        ip = socket.getaddrinfo(host, int(port), socket.AF_INET, socket.SOCK_DGRAM)[0][4][0]
+    except socket.gaierror as e:
+        raise PortholeError(f"{path}: cannot resolve endpoint {host} ({e})")
+    env |= {"WIREGUARD_ENDPOINT_IP": ip, "WIREGUARD_ENDPOINT_PORT": port}
+    if vals.get("presharedkey"):
+        env["WIREGUARD_PRESHARED_KEY"] = vals["presharedkey"]
+    return env
+
+
+def down(p):
+    if p["type"] == "ssh":
+        pf = pidfile(p)
+        if pf.exists():
+            pid = int(pf.read_text())
+            if pid_alive(pid):
+                os.kill(pid, signal.SIGTERM)
+            pf.unlink()
+            log(f"{p['name']}: ssh tunnel stopped")
+    else:
+        exists = run(["docker", "ps", "-aq", "-f", f"name=^{container(p)}$"], check=False).stdout.strip()
+        if exists and run(["docker", "rm", "-f", container(p)], check=False).returncode == 0:
+            log(f"{p['name']}: container removed")
+
+
+def exit_info(p, timeout=15):
+    r = run(["curl", "-sS", "--max-time", str(timeout), "-x", proxy_url(p, for_curl=True), IPINFO], check=False)
+    if r.returncode != 0:
+        return None
+    try:
+        return json.loads(r.stdout)
+    except json.JSONDecodeError:
+        return None
+
+
+def check(p):
+    info = exit_info(p)
+    if not info:
+        raise PortholeError(f"{p['name']}: no response through 127.0.0.1:{p['port']}")
+    want = p.get("expect_country")
+    where = f"{info.get('ip')} {info.get('city', '')}, {info.get('country', '?')} ({info.get('org', '')})"
+    if want and info.get("country") != want:
+        # VPN "virtual locations" are registered in one country but hosted in another, so geo databases disagree.
+        r = run(["curl", "-sS", "--max-time", "10", "-x", proxy_url(p, for_curl=True), IPAPI], check=False)
+        try:
+            alt = json.loads(r.stdout).get("countryCode")
+        except json.JSONDecodeError:
+            alt = None
+        if alt != want:
+            raise PortholeError(f"{p['name']}: exit is {where}, expected country {want}")
+        log(f"{p['name']}: exit {where}; ip-api.com says {want} - likely a virtual location, "
+            f"so some sites will see {info.get('country')}")
+        return info
+    log(f"{p['name']}: exit {where}")
+    return info
+
+
+# ---------------------------------------------------------------- chromium / firefox
+
+def shared_profile(cfg, p):
+    """The chrome_profile a region uses (profile setting, else [defaults]); None means its own data."""
+    name = p.get("chrome_profile", cfg.get("defaults", {}).get("chrome_profile"))
+    if name and not re.fullmatch(r"[A-Za-z0-9_-]+", name):
+        raise PortholeError(f"chrome_profile '{name}' may only use letters, digits, - and _")
+    return name or None
+
+
+def profile_dir(p, browser):
+    # Shared profiles keep logins across regions; otherwise each region has its own cookies and logins.
+    if p.get("_shared"):
+        d = STATE / "shared" / p["_shared"] / browser
+    else:
+        d = STATE / "profiles" / p["name"] / browser
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def running_with(marker):
+    """Command lines of running processes that mention marker (e.g. a browser data folder)."""
+    out = run(["ps", "-axww", "-o", "command="], check=False).stdout
+    return [line for line in out.splitlines() if marker in line and "Helper" not in line]
+
+
+def guard_shared(cfg, p, browser, d):
+    """A data folder can only be open in one browser process, and that process keeps the proxy it started
+    with. Refuse to reuse a shared profile that is open through another region. Returns True if it is
+    already open through this region."""
+    if not p.get("_shared"):
+        return False
+    marker = f"--user-data-dir={d}" if browser != "firefox" else f"-profile {d}"
+    procs = running_with(marker)
+    if not procs:
+        return False
+    if browser == "firefox":
+        m = re.search(r'"network.proxy.(?:socks|http)_port", (\d+)', (d / "user.js").read_text() if (d / "user.js").exists() else "")
+        port = int(m.group(1)) if m else None
+    else:
+        m = re.search(r"--proxy-server=\S+:(\d+)", procs[0])
+        port = int(m.group(1)) if m else None
+    if port == p["port"]:
+        return True
+    owner = next((n for n, q in cfg.get("profile", {}).items() if q.get("port") == port), f"port {port}")
+    raise PortholeError(f"{browser} profile '{p['_shared']}' is already open through '{owner}'. Quit that "
+                    f"{browser} window first: a browser keeps the proxy it started with, so a new "
+                    f"'{p['name']}' window would go out through '{owner}'.")
+
+
+def browser_env(p):
+    env = dict(os.environ)
+    if p.get("tz"):
+        env["TZ"] = p["tz"]
+    return env
+
+
+def spawn(cmd, env):
+    subprocess.Popen(cmd, env=env, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                     stderr=subprocess.DEVNULL, start_new_session=True)
+
+
+def launch_chromium(cfg, p, browser, urls):
+    binary = BROWSERS[browser]
+    if not Path(binary).exists():
+        raise PortholeError(f"{browser} not found at {binary}")
+    d = profile_dir(p, browser)
+    guard_shared(cfg, p, browser, d)  # same region: Chrome just opens another window in the running copy
+    cmd = [binary,
+           f"--user-data-dir={d}",
+           f"--proxy-server={proxy_url(p)}",
+           "--force-webrtc-ip-handling-policy=disable_non_proxied_udp",
+           "--no-first-run", "--no-default-browser-check"]
+    if p.get("lang"):
+        cmd += [f"--lang={p['lang']}", f"--accept-lang={p['lang']}"]
+    spawn(cmd + (urls or [IPINFO]), browser_env(p))
+
+
+def launch_firefox(cfg, p, urls):
+    binary = BROWSERS["firefox"]
+    if not Path(binary).exists():
+        raise PortholeError(f"firefox not found at {binary}")
+    d = profile_dir(p, "firefox")
+    if guard_shared(cfg, p, "firefox", d):
+        log(f"firefox profile '{p['_shared']}' is already open through {p['name']}; use that window")
+        return
+    prefs = {
+        "network.proxy.type": 1,
+        "network.proxy.no_proxies_on": "localhost, 127.0.0.1",
+        "media.peerconnection.ice.proxy_only": True,
+        "network.trr.mode": 5,
+        "browser.shell.checkDefaultBrowser": False,
+        "browser.aboutwelcome.enabled": False,
+    }
+    if p["type"] == "ssh":
+        prefs |= {"network.proxy.socks": "127.0.0.1", "network.proxy.socks_port": p["port"],
+                  "network.proxy.socks_version": 5, "network.proxy.socks_remote_dns": True}
+    else:
+        prefs |= {"network.proxy.http": "127.0.0.1", "network.proxy.http_port": p["port"],
+                  "network.proxy.ssl": "127.0.0.1", "network.proxy.ssl_port": p["port"]}
+    if p.get("lang"):
+        prefs["intl.accept_languages"] = p["lang"]
+    lines = [f"user_pref({json.dumps(k)}, {json.dumps(v)});" for k, v in prefs.items()]
+    (d / "user.js").write_text("\n".join(lines) + "\n")
+    spawn([binary, "-no-remote", "-profile", str(d), *(urls or [IPINFO])], browser_env(p))
+
+
+# ---------------------------------------------------------------- safari (system PAC)
+
+def pac_text(p, domains):
+    if p["type"] == "ssh":
+        target = f"SOCKS5 127.0.0.1:{p['port']}; SOCKS 127.0.0.1:{p['port']}"
+    else:
+        target = f"PROXY 127.0.0.1:{p['port']}"
+    # No DIRECT fallback for routed hosts: if the tunnel dies they fail instead of leaking.
+    if domains is None:
+        match = "true"
+    else:
+        match = ("(function(){var d=" + json.dumps(domains) + ";for(var i=0;i<d.length;i++)"
+                 "{if(host===d[i]||dnsDomainIs(host,'.'+d[i]))return true;}return false;})()")
+    return ("function FindProxyForURL(url, host) {\n"
+            "  host = host.toLowerCase();\n"
+            "  if (isPlainHostName(host) || host === '127.0.0.1' || host === 'localhost') return 'DIRECT';\n"
+            f"  if ({match}) return '{target}';\n"
+            "  return 'DIRECT';\n"
+            "}\n")
+
+
+def serve_pac(port, text):
+    body = text.encode()
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            self.send_response(200)
+            self.send_header("Content-Type", "application/x-ns-proxy-autoconfig")
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *a):
+            pass
+
+    try:
+        srv = ThreadingHTTPServer(("127.0.0.1", port), Handler)
+    except OSError as e:
+        raise PortholeError(f"cannot serve PAC on 127.0.0.1:{port} ({e}); is another Safari session running?")
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    return srv
+
+
+def network_services(cfg):
+    configured = cfg.get("safari", {}).get("services")
+    if configured:
+        return configured
+    # The service that owns the default route; skips VPN utun interfaces.
+    iface = None
+    r = run(["route", "-n", "get", "default"], check=False)
+    m = re.search(r"interface:\s*(\S+)", r.stdout)
+    if m and not m.group(1).startswith("utun"):
+        iface = m.group(1)
+    if iface:
+        ports = run(["networksetup", "-listallhardwareports"], check=False).stdout
+        for block in ports.split("\n\n"):
+            name = re.search(r"Hardware Port:\s*(.+)", block)
+            dev = re.search(r"Device:\s*(\S+)", block)
+            if name and dev and dev.group(1) == iface:
+                return [name.group(1).strip()]
+    return ["Wi-Fi"]
+
+
+def read_autoproxy(service):
+    out = run(["networksetup", "-getautoproxyurl", service]).stdout
+    url = re.search(r"URL:\s*(.*)", out).group(1).strip()
+    enabled = re.search(r"Enabled:\s*(\w+)", out).group(1) == "Yes"
+    return {"url": None if url == "(null)" else url, "enabled": enabled}
+
+
+def networksetup_batch(cmds):
+    """Run networksetup commands, escalating once through the macOS admin prompt if needed."""
+    def failed(r):
+        return r.returncode != 0 or "Error" in r.stdout or "admin" in (r.stdout + r.stderr).lower()
+
+    first = run(cmds[0], check=False)
+    if not failed(first):
+        for c in cmds[1:]:
+            r = run(c, check=False)
+            if failed(r):
+                raise PortholeError(f"{' '.join(c)}: {(r.stdout + r.stderr).strip()}")
+        return
+    script = " && ".join(" ".join(shlex.quote(a) for a in c) for c in cmds)
+    osa = f'do shell script "{script.replace(chr(92), chr(92) * 2).replace(chr(34), chr(92) + chr(34))}" ' \
+          f'with administrator privileges'
+    r = run(["osascript", "-e", osa], check=False)
+    if r.returncode != 0:
+        raise PortholeError(f"changing the system proxy failed: {r.stderr.strip()}")
+
+
+def set_pac(services, url):
+    cmds = []
+    for s in services:
+        cmds.append(["networksetup", "-setautoproxyurl", s, url])
+        cmds.append(["networksetup", "-setautoproxystate", s, "on"])
+    networksetup_batch(cmds)
+
+
+def safari_restore():
+    if not RESTORE_FILE.exists():
+        log("nothing to restore")
+        return
+    saved = json.loads(RESTORE_FILE.read_text())
+    cmds = []
+    for service, orig in saved["services"].items():
+        if orig["url"]:
+            cmds.append(["networksetup", "-setautoproxyurl", service, orig["url"]])
+        cmds.append(["networksetup", "-setautoproxystate", service, "on" if orig["enabled"] else "off"])
+    networksetup_batch(cmds)
+    RESTORE_FILE.unlink()
+    log(f"system proxy restored on {', '.join(saved['services'])}")
+
+
+def safari_running():
+    return run(["pgrep", "-x", "Safari"], check=False).returncode == 0
+
+
+def wait_for(cond, seconds):
+    deadline = time.monotonic() + seconds
+    while time.monotonic() < deadline:
+        if cond():
+            return True
+        time.sleep(0.25)
+    return cond()
+
+
+def launch_safari(cfg, p, urls, all_traffic, assume_yes, sites=None):
+    sc = cfg.get("safari", {})
+    pac_port = sc.get("pac_port", DEFAULT_PAC_PORT)
+    if all_traffic:
+        domains = None
+    else:
+        set_name = sites or p.get("pac_set", sc.get("pac_set", "streaming"))
+        domains = cfg.get("pac_sets", {}).get(set_name)
+        if not domains:
+            raise PortholeError(f"pac set '{set_name}' is empty or missing in [pac_sets]")
+        domains = [d.lower().lstrip(".") for d in domains]
+
+    if RESTORE_FILE.exists():
+        raise PortholeError(f"a Safari session is already active (or crashed); run `porthole safari restore` first")
+
+    services = network_services(cfg)
+    if safari_running() and not assume_yes:
+        ans = input("Safari is running and must restart to pick up the proxy. Restart it? [Y/n] ").strip().lower()
+        if ans not in ("", "y", "yes"):
+            raise PortholeError("cancelled")
+
+    srv = serve_pac(pac_port, pac_text(p, domains))
+    saved = {"profile": p["name"], "services": {s: read_autoproxy(s) for s in services}}
+    STATE.mkdir(parents=True, exist_ok=True)
+    RESTORE_FILE.write_text(json.dumps(saved, indent=2))
+
+    restored = threading.Event()
+
+    def restore_once(*_):
+        if restored.is_set():
+            return
+        restored.set()
+        try:
+            safari_restore()
+        finally:
+            srv.shutdown()
+
+    def on_signal(signum, frame):
+        restore_once()
+        sys.exit(130)
+
+    for sig in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
+        signal.signal(sig, on_signal)
+
+    try:
+        pac_url = f"http://127.0.0.1:{pac_port}/proxy.pac?v={int(time.time())}"
+        set_pac(services, pac_url)
+        scope = "all traffic" if domains is None else f"{len(domains)} domains"
+        log(f"system PAC on {', '.join(services)} -> {p['name']} ({scope}); everything else goes DIRECT")
+
+        # Safari must fully exit before relaunch: reopening a Safari that is still shutting down just
+        # activates the dying process, which then exits and would end the session at once.
+        if safari_running():
+            run(["osascript", "-e", 'tell application "Safari" to quit'], check=False)
+            if not wait_for(lambda: not safari_running(), 30):
+                raise PortholeError("Safari did not quit within 30s (is a dialog open?); quit it yourself and run again")
+        run(["open", "-a", "Safari", *urls], check=False)
+        if not wait_for(safari_running, 30):
+            raise PortholeError("Safari did not start within 30s")
+        log("Safari session active. Quit Safari (or press Ctrl-C) to restore the system proxy.")
+        warned = False
+        misses = 0
+        while misses < 2:  # two checks in a row, so a brief pgrep miss doesn't end the session
+            time.sleep(2)
+            misses = 0 if safari_running() else misses + 1
+            if not port_open(p["port"]) and not warned:
+                log(f"WARNING: tunnel {p['name']} is down; routed sites will fail (not leak) until `porthole up {p['name']}`")
+                warned = True
+            elif port_open(p["port"]):
+                warned = False
+    finally:
+        restore_once()
+
+
+# ---------------------------------------------------------------- commands
+
+def cmd_list(cfg, args):
+    for name, p in cfg.get("profile", {}).items():
+        via = p.get("host") if p["type"] == "ssh" else f"{p.get('provider', 'custom')} {p.get('countries') or p.get('cities') or p.get('hostnames') or ''}"
+        shared = shared_profile(cfg, p)
+        print(f"{name:12} {p['type']:8} :{p['port']:<6} {via}  tz={p.get('tz', '-')}"
+              + (f"  chrome_profile={shared}" if shared else ""))
+
+
+def cmd_status(cfg, args):
+    for name, p in cfg.get("profile", {}).items():
+        if not is_up(p):
+            print(f"{name:12} down")
+            continue
+        info = exit_info(p, timeout=8)
+        where = f"{info.get('ip')} {info.get('city', '')}, {info.get('country')}" if info else "up, but no response"
+        print(f"{name:12} up    :{p['port']:<6} {where}")
+    if RESTORE_FILE.exists():
+        saved = json.loads(RESTORE_FILE.read_text())
+        print(f"\nSafari session active via '{saved['profile']}' (system PAC set; `porthole safari restore` to undo)")
+
+
+def cmd_up(cfg, args):
+    p = get_profile(cfg, args.profile)
+    up(cfg, p)
+    check(p)
+
+
+def cmd_down(cfg, args):
+    if args.all:
+        for p in cfg.get("profile", {}).values():
+            down(p)
+        return
+    if not args.profile:
+        raise PortholeError("give a profile or --all")
+    down(get_profile(cfg, args.profile))
+
+
+def cmd_check(cfg, args):
+    p = get_profile(cfg, args.profile)
+    if not is_up(p):
+        raise PortholeError(f"{p['name']} is down; run `porthole up {p['name']}`")
+    check(p)
+
+
+def cmd_launch(cfg, args):
+    p = get_profile(cfg, args.profile)
+    browser = args.browser or p.get("browser") or cfg.get("defaults", {}).get("browser", "chrome")
+    if browser not in BROWSERS:
+        raise PortholeError(f"unknown browser '{browser}' (choose {', '.join(BROWSERS)})")
+    p["_shared"] = shared_profile(cfg, p)
+    up(cfg, p)
+    check(p)  # refuses to launch if the exit is wrong
+    if browser in ("chrome", "brave"):
+        launch_chromium(cfg, p, browser, args.urls)
+    elif browser == "firefox":
+        launch_firefox(cfg, p, args.urls)
+    else:
+        launch_safari(cfg, p, args.urls, args.all, args.yes, args.sites)
+        return
+    shared = f" with shared profile '{p['_shared']}'" if p.get("_shared") and browser != "safari" else ""
+    log(f"{browser} launched through {p['name']}{shared}")
+
+
+def cmd_safari(cfg, args):
+    if args.action == "restore":
+        safari_restore()
+    elif args.action == "pac":
+        p = get_profile(cfg, args.profile)
+        domains = cfg.get("pac_sets", {}).get(p.get("pac_set", cfg.get("safari", {}).get("pac_set", "streaming")))
+        print(pac_text(p, domains), end="")
+
+
+def main():
+    ap = argparse.ArgumentParser(prog="porthole", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    sub = ap.add_subparsers(dest="cmd", required=True)
+    sub.add_parser("list", help="show configured profiles")
+    sub.add_parser("status", help="show which tunnels are up and their exit IPs")
+    s = sub.add_parser("up", help="start a profile's tunnel")
+    s.add_argument("profile")
+    s = sub.add_parser("down", help="stop a profile's tunnel")
+    s.add_argument("profile", nargs="?")
+    s.add_argument("--all", action="store_true")
+    s = sub.add_parser("check", help="show a profile's exit IP and country")
+    s.add_argument("profile")
+    s = sub.add_parser("launch", help="open a browser through a profile")
+    s.add_argument("profile")
+    s.add_argument("urls", nargs="*")
+    s.add_argument("-b", "--browser", choices=list(BROWSERS))
+    s.add_argument("--all", action="store_true", help="safari: route all traffic, not just the pac_set domains")
+    s.add_argument("--sites", metavar="SET", help="safari: route this [pac_sets] list instead of the profile's pac_set")
+    s.add_argument("-y", "--yes", action="store_true", help="safari: restart Safari without asking")
+    s = sub.add_parser("safari", help="safari helpers")
+    s.add_argument("action", choices=["restore", "pac"])
+    s.add_argument("profile", nargs="?", help="for `pac`: print the PAC a profile would use")
+    args = ap.parse_args()
+
+    try:
+        if args.cmd == "safari" and args.action == "restore":
+            safari_restore()
+            return
+        cfg = load_config()
+        {"list": cmd_list, "status": cmd_status, "up": cmd_up, "down": cmd_down, "check": cmd_check,
+         "launch": cmd_launch, "safari": cmd_safari}[args.cmd](cfg, args)
+    except PortholeError as e:
+        log(str(e))
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()

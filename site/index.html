@@ -1,0 +1,331 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Porthole: a browser window in another country</title>
+<meta name="description" content="Open Chrome, Brave, Firefox or Safari through another country, using your own servers or any WireGuard VPN, without putting your whole computer on a VPN.">
+<meta property="og:title" content="Porthole">
+<meta property="og:description" content="A browser window in another country. The rest of your computer stays home.">
+<link rel="icon" href="icon.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,650&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg: #f6f3ec; --bg-2: #ece6da; --card: #fffdf8; --ink: #1d2327; --ink-2: #4a545b; --ink-3: #78828a;
+  --line: #ddd5c6; --accent: #0f6e78; --accent-ink: #ffffff; --accent-soft: #d6ecec; --brass: #b07a2a;
+  --sea: #0f6e78; --home: #8a6a3b; --code-bg: #1d2327; --code-ink: #e8e3d8;
+  --shadow: 0 1px 2px rgba(29,35,39,.06), 0 8px 24px rgba(29,35,39,.06);
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #11171b; --bg-2: #172026; --card: #18222a; --ink: #ece7dc; --ink-2: #b3b9bd; --ink-3: #848d93;
+    --line: #2a363f; --accent: #4fb8c2; --accent-ink: #0c1316; --accent-soft: #173a40; --brass: #d7a457;
+    --sea: #4fb8c2; --home: #c9a46b; --code-bg: #0b1013; --code-ink: #e3ddd1;
+    --shadow: 0 1px 2px rgba(0,0,0,.3), 0 8px 24px rgba(0,0,0,.25);
+  }
+}
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body { margin: 0; background: var(--bg); color: var(--ink); font: 16px/1.6 Inter, system-ui, sans-serif; }
+a { color: var(--accent); text-underline-offset: 3px; }
+code, pre { font-family: "JetBrains Mono", ui-monospace, monospace; font-size: .88em; }
+:not(pre) > code { background: var(--bg-2); padding: .1em .35em; border-radius: 5px; }
+.wrap { max-width: 1080px; margin: 0 auto; padding: 0 20px; }
+h1, h2, h3 { font-family: Fraunces, Georgia, serif; font-weight: 650; line-height: 1.15; letter-spacing: -.01em; margin: 0; }
+h2 { font-size: clamp(28px, 4vw, 38px); margin-bottom: 14px; }
+h3 { font-size: 20px; font-weight: 500; margin-bottom: 6px; }
+.lede { color: var(--ink-2); font-size: 18px; max-width: 62ch; margin: 0 0 28px; }
+section { padding: 72px 0; border-top: 1px solid var(--line); }
+
+/* nav */
+nav { display: flex; align-items: center; justify-content: space-between; padding: 20px 0; }
+.brand { display: flex; align-items: center; gap: 10px; font-family: Fraunces, serif; font-weight: 650; font-size: 21px; color: var(--ink); text-decoration: none; }
+.brand img { width: 30px; height: 30px; }
+nav .links { display: flex; gap: 22px; font-size: 15px; }
+nav .links a { color: var(--ink-2); text-decoration: none; }
+nav .links a:hover { color: var(--ink); }
+
+/* hero */
+.hero { display: grid; grid-template-columns: 1.1fr .9fr; gap: 48px; align-items: center; padding: 40px 0 80px; }
+.hero h1 { font-size: clamp(40px, 6.4vw, 68px); }
+.hero h1 em { font-style: normal; color: var(--accent); }
+.hero p { font-size: 19px; color: var(--ink-2); margin: 22px 0 30px; max-width: 34em; }
+.dl { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+.btn { display: inline-flex; align-items: center; gap: 8px; padding: 12px 18px; border-radius: 10px; font-weight: 600; font-size: 15px;
+  text-decoration: none; border: 1px solid var(--line); background: var(--card); color: var(--ink); box-shadow: var(--shadow); }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+.btn:hover { transform: translateY(-1px); }
+.small { font-size: 14px; color: var(--ink-3); margin-top: 14px; }
+
+/* porthole illustration */
+.scene { position: relative; aspect-ratio: 1; max-width: 420px; justify-self: center; width: 100%; }
+.scene svg { width: 100%; height: 100%; display: block; }
+
+/* how */
+.how { display: grid; grid-template-columns: repeat(3, 1fr); gap: 18px; margin-top: 30px; }
+.card { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 22px; box-shadow: var(--shadow); }
+.card p { margin: 6px 0 0; color: var(--ink-2); font-size: 15px; }
+.step { font: 500 13px "JetBrains Mono", monospace; color: var(--brass); letter-spacing: .04em; text-transform: uppercase; margin-bottom: 10px; }
+.diagram { margin-top: 26px; }
+.diagram svg { width: 100%; height: auto; display: block; }
+
+/* uses */
+.uses { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+.use { padding: 20px; border-radius: 14px; background: var(--card); border: 1px solid var(--line); }
+.use .k { font-size: 22px; line-height: 1; margin-bottom: 12px; }
+.use p { margin: 6px 0 0; color: var(--ink-2); font-size: 15px; }
+.note { color: var(--ink-3); font-size: 14px; margin-top: 18px; }
+
+/* table */
+.tbl { width: 100%; border-collapse: collapse; background: var(--card); border: 1px solid var(--line); border-radius: 14px; overflow: hidden; font-size: 15px; }
+.tbl th, .tbl td { text-align: left; padding: 12px 16px; border-bottom: 1px solid var(--line); vertical-align: top; }
+.tbl th { font-weight: 600; background: var(--bg-2); }
+.tbl tr:last-child td { border-bottom: 0; }
+.tblwrap { overflow-x: auto; }
+
+/* two col */
+.split { display: grid; grid-template-columns: 1fr 1fr; gap: 40px; align-items: start; }
+ul.ticks { list-style: none; padding: 0; margin: 0; }
+ul.ticks li { padding: 8px 0 8px 28px; position: relative; color: var(--ink-2); }
+ul.ticks li::before { content: ""; position: absolute; left: 4px; top: 16px; width: 10px; height: 10px; border-radius: 50%; border: 2px solid var(--accent); }
+ul.ticks b { color: var(--ink); font-weight: 600; }
+pre { background: var(--code-bg); color: var(--code-ink); padding: 18px 20px; border-radius: 12px; overflow-x: auto; line-height: 1.55; margin: 0; }
+pre .c { color: #8c968f; }
+
+/* faq */
+details { border-bottom: 1px solid var(--line); padding: 16px 0; }
+details summary { cursor: pointer; font-weight: 600; list-style: none; display: flex; justify-content: space-between; gap: 16px; }
+details summary::after { content: "+"; color: var(--accent); font-weight: 500; }
+details[open] summary::after { content: "–"; }
+details p { color: var(--ink-2); margin: 10px 0 0; max-width: 70ch; }
+
+footer { padding: 36px 0 60px; border-top: 1px solid var(--line); color: var(--ink-3); font-size: 14px; display: flex; justify-content: space-between; flex-wrap: wrap; gap: 12px; }
+footer a { color: var(--ink-2); }
+
+@media (max-width: 860px) {
+  .hero { grid-template-columns: 1fr; padding-top: 16px; }
+  .scene { max-width: 300px; order: -1; }
+  .how, .uses { grid-template-columns: 1fr; }
+  .split { grid-template-columns: 1fr; }
+  nav .links a:not(.gh) { display: none; }
+  section { padding: 54px 0; }
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <nav>
+    <a class="brand" href="#"><img src="icon.png" alt="">Porthole</a>
+    <div class="links">
+      <a href="#how">How it works</a>
+      <a href="#uses">Uses</a>
+      <a href="#safari">Safari</a>
+      <a href="#faq">FAQ</a>
+      <a class="gh" href="https://github.com/ashutosh091/porthole">GitHub</a>
+    </div>
+  </nav>
+
+  <header class="hero">
+    <div>
+      <h1>A browser window in <em>another country.</em></h1>
+      <p>Porthole opens Chrome, Brave, Firefox or Safari through one of your servers or any WireGuard VPN location. Only that window travels. Your other apps, tabs and calls stay on your normal connection.</p>
+      <div class="dl" id="dl">
+        <a class="btn primary" data-os="mac" href="https://github.com/ashutosh091/porthole/releases/latest/download/Porthole-macos.dmg">Download for macOS</a>
+        <a class="btn" data-os="win" href="https://github.com/ashutosh091/porthole/releases/latest/download/Porthole-windows-amd64-setup.exe">Windows</a>
+        <a class="btn" data-os="linux" href="https://github.com/ashutosh091/porthole/releases/latest/download/Porthole-linux-amd64.AppImage">Linux</a>
+      </div>
+      <div class="small">Free and open source (MIT). Also a command-line tool for macOS. <a href="https://github.com/ashutosh091/porthole/releases/latest">All downloads</a></div>
+    </div>
+    <div class="scene" aria-hidden="true">
+      <svg viewBox="0 0 400 400">
+        <defs>
+          <clipPath id="glass"><circle cx="200" cy="200" r="122"/></clipPath>
+          <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0" stop-color="var(--accent-soft)"/><stop offset="1" stop-color="var(--bg-2)"/>
+          </linearGradient>
+        </defs>
+        <circle cx="200" cy="200" r="168" fill="var(--card)" stroke="var(--line)" stroke-width="2"/>
+        <circle cx="200" cy="200" r="146" fill="none" stroke="var(--brass)" stroke-width="20"/>
+        <g fill="var(--bg)" stroke="var(--brass)" stroke-width="3">
+          <circle cx="200" cy="46" r="7"/><circle cx="354" cy="200" r="7"/><circle cx="200" cy="354" r="7"/><circle cx="46" cy="200" r="7"/>
+          <circle cx="309" cy="91" r="7"/><circle cx="309" cy="309" r="7"/><circle cx="91" cy="309" r="7"/><circle cx="91" cy="91" r="7"/>
+        </g>
+        <g clip-path="url(#glass)">
+          <rect x="60" y="60" width="280" height="280" fill="url(#sky)"/>
+          <g fill="none" stroke="var(--sea)" stroke-width="1.5" opacity=".55">
+            <ellipse cx="200" cy="250" rx="150" ry="150"/>
+            <ellipse cx="200" cy="250" rx="90" ry="150"/>
+            <ellipse cx="200" cy="250" rx="30" ry="150"/>
+            <line x1="40" y1="190" x2="360" y2="190"/><line x1="50" y1="250" x2="350" y2="250"/><line x1="60" y1="310" x2="340" y2="310"/>
+          </g>
+          <circle cx="248" cy="214" r="9" fill="var(--accent)"/>
+          <circle cx="248" cy="214" r="20" fill="none" stroke="var(--accent)" stroke-width="2" opacity=".5"/>
+          <circle cx="248" cy="214" r="32" fill="none" stroke="var(--accent)" stroke-width="1.5" opacity=".25"/>
+        </g>
+        <circle cx="200" cy="200" r="122" fill="none" stroke="var(--ink)" stroke-opacity=".15" stroke-width="2"/>
+        <path d="M128 140 A 90 90 0 0 1 176 104" stroke="#fff" stroke-opacity=".55" stroke-width="7" fill="none" stroke-linecap="round"/>
+      </svg>
+    </div>
+  </header>
+</div>
+
+<section id="how">
+  <div class="wrap">
+    <h2>One window travels. Everything else stays home.</h2>
+    <p class="lede">A system VPN moves your whole computer. Porthole gives each region its own local proxy port and points one browser instance at it. No routes, no network interfaces and no system VPN are touched.</p>
+    <div class="diagram" aria-label="Diagram: a Porthole browser window goes through a local port and a tunnel to an exit in another country, while other apps go directly to the internet.">
+      <svg viewBox="0 0 960 250" role="img">
+        <g font-family="Inter, sans-serif" font-size="15">
+          <rect x="10" y="20" width="200" height="74" rx="12" fill="var(--card)" stroke="var(--accent)" stroke-width="2"/>
+          <text x="110" y="52" text-anchor="middle" fill="var(--ink)" font-weight="600">Chrome via “th”</text>
+          <text x="110" y="74" text-anchor="middle" fill="var(--ink-3)" font-size="13">own profile · TZ Bangkok</text>
+          <rect x="10" y="150" width="200" height="74" rx="12" fill="var(--card)" stroke="var(--line)" stroke-width="2"/>
+          <text x="110" y="182" text-anchor="middle" fill="var(--ink)" font-weight="600">Everything else</text>
+          <text x="110" y="204" text-anchor="middle" fill="var(--ink-3)" font-size="13">apps, other windows, calls</text>
+          <rect x="290" y="20" width="170" height="74" rx="12" fill="var(--accent-soft)" stroke="var(--accent)" stroke-width="2"/>
+          <text x="375" y="52" text-anchor="middle" fill="var(--ink)" font-weight="600">127.0.0.1:8891</text>
+          <text x="375" y="74" text-anchor="middle" fill="var(--ink-3)" font-size="13">Porthole proxy</text>
+          <rect x="540" y="20" width="190" height="74" rx="12" fill="var(--card)" stroke="var(--accent)" stroke-width="2" stroke-dasharray="6 5"/>
+          <text x="635" y="52" text-anchor="middle" fill="var(--ink)" font-weight="600">WireGuard or SSH</text>
+          <text x="635" y="74" text-anchor="middle" fill="var(--ink-3)" font-size="13">encrypted tunnel</text>
+          <rect x="800" y="20" width="150" height="74" rx="12" fill="var(--accent)"/>
+          <text x="875" y="52" text-anchor="middle" fill="var(--accent-ink)" font-weight="600">Exit: Thailand</text>
+          <text x="875" y="74" text-anchor="middle" fill="var(--accent-ink)" font-size="13" opacity=".85">sites see TH</text>
+          <rect x="800" y="150" width="150" height="74" rx="12" fill="var(--card)" stroke="var(--home)" stroke-width="2"/>
+          <text x="875" y="182" text-anchor="middle" fill="var(--ink)" font-weight="600">Your normal IP</text>
+          <text x="875" y="204" text-anchor="middle" fill="var(--ink-3)" font-size="13">unchanged</text>
+        </g>
+        <g fill="none" stroke-width="2.5" stroke-linecap="round">
+          <path d="M210 57 H290" stroke="var(--accent)"/><path d="M460 57 H540" stroke="var(--accent)"/><path d="M730 57 H800" stroke="var(--accent)"/>
+          <path d="M210 187 H800" stroke="var(--home)" stroke-dasharray="2 7"/>
+        </g>
+        <g fill="var(--accent)"><path d="M290 57 l-9 -5 v10z"/><path d="M540 57 l-9 -5 v10z"/><path d="M800 57 l-9 -5 v10z"/></g>
+        <path d="M800 187 l-9 -5 v10z" fill="var(--home)"/>
+      </svg>
+    </div>
+    <div class="how">
+      <div class="card"><div class="step">01 · Add an exit</div><h3>Your server or a VPN location</h3><p>Point at any SSH server you can log into, or import a WireGuard <code>.conf</code> from your VPN provider’s manual setup page. Nothing to install on the server.</p></div>
+      <div class="card"><div class="step">02 · Pick a browser</div><h3>Chrome, Brave, Firefox or Safari</h3><p>Each region gets its own browser profile, timezone and language, so it looks local. Several regions can be open side by side.</p></div>
+      <div class="card"><div class="step">03 · Checked before it opens</div><h3>No surprises, no leaks</h3><p>Porthole confirms the exit country before the window opens. DNS and WebRTC go through the tunnel; if the tunnel drops, pages fail instead of using your real IP.</p></div>
+    </div>
+  </div>
+</section>
+
+<section id="uses">
+  <div class="wrap">
+    <h2>What it’s for</h2>
+    <p class="lede">Anything where one site should see you somewhere else, and nothing else on your computer should.</p>
+    <div class="uses">
+      <div class="use"><div class="k">🎬</div><h3>Streaming and music</h3><p>Catalogues that differ by country, including services that only play HD in Safari.</p></div>
+      <div class="use"><div class="k">✈️</div><h3>Regional prices</h3><p>Flights, hotels, software and shops often quote differently by visitor country. Compare side by side.</p></div>
+      <div class="use"><div class="k">🔎</div><h3>Local search and ads</h3><p>See rankings, ads and SERP features as a user in another market sees them.</p></div>
+      <div class="use"><div class="k">🧪</div><h3>Testing your product</h3><p>Geo-redirects, currency, language, consent banners and CDN behaviour, per country, from one laptop.</p></div>
+      <div class="use"><div class="k">🏠</div><h3>Home sites while travelling</h3><p>Banks, tax and government portals that block foreign IPs, through a small server back home.</p></div>
+      <div class="use"><div class="k">🏢</div><h3>IP-allowlisted work tools</h3><p>Dashboards that only accept the office IP, via an office SSH host, without a full company VPN.</p></div>
+    </div>
+    <p class="note">Respect the terms of the sites and services you use; some forbid access from outside a region.</p>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <h2>Bring your own exits</h2>
+    <p class="lede">Porthole doesn’t sell or run servers. It uses the ones you already have.</p>
+    <div class="tblwrap">
+    <table class="tbl">
+      <tr><th>Exit</th><th>What you need</th><th>How it tunnels</th></tr>
+      <tr><td><b>Your server over SSH</b></td><td>Any VPS, home server or office bastion you can <code>ssh</code> into</td><td><code>ssh -D</code> SOCKS proxy; nothing installed on the server</td></tr>
+      <tr><td><b>VPN provider location</b></td><td>A WireGuard <code>.conf</code> from IVPN, Mullvad, NordVPN, Proton VPN, Surfshark, Windscribe and others</td><td>Userspace WireGuard inside the app: no admin rights, no system VPN</td></tr>
+      <tr><td><b>Your own WireGuard</b></td><td>A <code>.conf</code> from wg-easy, a router or any WireGuard server</td><td>Same as above</td></tr>
+      <tr><td><b>Provider by country</b> (CLI)</td><td>Provider credentials for <a href="https://github.com/qdm12/gluetun">gluetun</a></td><td>A gluetun container in Docker</td></tr>
+    </table>
+    </div>
+  </div>
+</section>
+
+<section id="safari">
+  <div class="wrap split">
+    <div>
+      <h2>Safari, too</h2>
+      <p class="lede">Safari can’t take a per-window proxy, so Porthole handles it differently on macOS:</p>
+      <ul class="ticks">
+        <li><b>Only a list of sites goes through the region</b>: streaming services by default, or lists you define for travel, search, work or home. Everything else stays direct.</li>
+        <li><b>Your settings come back</b> automatically when Safari quits, when you press Stop, or the next time Porthole starts after a crash.</li>
+        <li><b>Or route all of Safari</b> when you really need to, with one click.</li>
+      </ul>
+    </div>
+    <pre><span class="c"># profiles.toml</span>
+[pac_sets]
+streaming = ["netflix.com", "nflxvideo.net",
+             "primevideo.com", "tv.apple.com"]
+travel    = ["skyscanner.net", "booking.com",
+             "expedia.com", "airbnb.com"]
+work      = ["grafana.example.com"]
+
+<span class="c"># CLI</span>
+porthole launch uk -b safari
+porthole launch us -b safari --sites travel</pre>
+  </div>
+</section>
+
+<section id="cli">
+  <div class="wrap split">
+    <div>
+      <h2>Menu bar app, or the command line</h2>
+      <p class="lede">The desktop app lives in your menu bar or system tray: import a config, click a browser, done. The <code>porthole</code> CLI (macOS, Python 3.11+) does the same from a terminal and shares the same config file.</p>
+      <ul class="ticks">
+        <li><b>Shared or separate logins</b>: one browser profile for every region, or separate ones per region or group.</li>
+        <li><b>Leak test</b> in one click: IP, WebRTC and DNS checks through the profile.</li>
+        <li><b>Plain text config</b> at <code>~/.config/porthole/profiles.toml</code>.</li>
+      </ul>
+    </div>
+    <pre><span class="c"># install the CLI</span>
+curl -fsSLo ~/.local/bin/porthole \
+  https://github.com/ashutosh091/porthole/releases/latest/download/porthole
+chmod +x ~/.local/bin/porthole
+
+porthole list
+porthole launch th                 <span class="c"># Chrome via Thailand</span>
+porthole launch us -b firefox
+porthole status                    <span class="c"># exits and IPs</span>
+porthole down --all</pre>
+  </div>
+</section>
+
+<section id="faq">
+  <div class="wrap">
+    <h2>Questions</h2>
+    <details><summary>Is Porthole a VPN?</summary><p>No. It doesn’t provide servers and it doesn’t change your system network. It connects to exits you already have (your servers, or a VPN subscription’s WireGuard configs) and routes just one browser window through them.</p></details>
+    <details><summary>Does it change my whole computer’s network?</summary><p>For Chrome, Brave and Firefox, no: only the window Porthole opens uses the tunnel. Safari mode is the exception on macOS, because Safari only follows the system proxy; Porthole sets a proxy file that sends only the listed sites through the region and restores your settings when Safari quits.</p></details>
+    <details><summary>Will my normal Chrome be affected?</summary><p>No. Porthole starts a separate Chrome instance with its own data folder. Your everyday Chrome keeps its own profile and network.</p></details>
+    <details><summary>Do I need admin rights or Docker?</summary><p>The desktop app needs neither. The CLI uses Docker only for gluetun profiles. macOS may ask for your password when Safari mode changes the proxy setting.</p></details>
+    <details><summary>Does it work with my VPN provider?</summary><p>If your provider offers WireGuard configuration files (most do, under “manual setup”), yes. For OpenVPN-only providers, use the CLI with gluetun.</p></details>
+    <details><summary>Why does a site still say I’m somewhere else?</summary><p>Some VPN locations are virtual: the IP is registered in one country while the server sits in another, and geo-IP databases disagree. Porthole checks two databases and warns you when they differ. Streaming services also often block datacenter IPs, so a VPN location usually works better than a cheap VPS for streaming.</p></details>
+  </div>
+</section>
+
+<div class="wrap">
+  <footer>
+    <span>Porthole · MIT licensed · not affiliated with any VPN provider</span>
+    <span><a href="https://github.com/ashutosh091/porthole">Source</a> · <a href="https://github.com/ashutosh091/porthole/releases">Releases</a> · <a href="https://github.com/ashutosh091/porthole/issues">Issues</a></span>
+  </footer>
+</div>
+
+<script>
+(function () {
+  var ua = navigator.userAgent, os = /Windows/.test(ua) ? "win" : /Linux|X11/.test(ua) && !/Android/.test(ua) ? "linux" : "mac";
+  var labels = { mac: "Download for macOS", win: "Download for Windows", linux: "Download for Linux" };
+  var short = { mac: "macOS", win: "Windows", linux: "Linux" };
+  var dl = document.getElementById("dl");
+  dl.querySelectorAll(".btn").forEach(function (a) {
+    var mine = a.dataset.os === os;
+    a.classList.toggle("primary", mine);
+    a.textContent = mine ? labels[a.dataset.os] : short[a.dataset.os];
+    if (mine) dl.insertBefore(a, dl.firstChild);
+  });
+})();
+</script>
+</body>
+</html>

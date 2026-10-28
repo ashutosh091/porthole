@@ -1,0 +1,134 @@
+# Porthole profiles. Copy to ~/.config/porthole/profiles.toml and edit.
+# Every profile is one local proxy port that exits through one place; each needs a unique port.
+
+[defaults]
+browser = "chrome"                       # chrome | brave | firefox | safari
+# gluetun_image = "qmcgaw/gluetun:v3"
+# chrome_profile = "main"               # share one browser profile (logins) across all regions;
+#                                       # set it per profile instead to share among just some of them
+
+# =====================================================================================
+# 1. Your own servers over SSH (SOCKS5; nothing to install on the server)
+# =====================================================================================
+
+# A VPS in another country: see sites, prices and search results as a local visitor would.
+[profile.us]
+type = "ssh"
+host = "my-us-server"                    # ~/.ssh/config alias or hostname
+# user = "me"
+# ssh_args = ["-i", "~/.ssh/id_ed25519", "-o", "IdentitiesOnly=yes"]
+port = 1081
+tz = "America/New_York"                  # browser timezone, so it matches the exit
+expect_country = "US"                    # launch refuses to open the browser if the exit differs
+# lang = "en-US"                         # browser UI and Accept-Language
+
+# An office machine or bastion: reach dashboards and admin panels that only allow the office IP,
+# without putting your whole laptop on the company VPN.
+# [profile.office]
+# type = "ssh"
+# host = "bastion.example.com"
+# port = 1082
+# expect_country = "DE"
+# pac_set = "work"                       # Safari mode routes only the [pac_sets] work list
+# chrome_profile = "work"                # keep work logins apart from personal ones
+
+# A server back home: banking, tax and government sites that block foreign IPs while you travel.
+# [profile.home]
+# type = "ssh"
+# host = "home-pi"                       # e.g. a Raspberry Pi with port forwarding or Tailscale
+# port = 1083
+# expect_country = "IN"
+# pac_set = "home"
+
+# =====================================================================================
+# 2. A downloaded WireGuard .conf (recommended for commercial VPNs and your own WireGuard)
+# =====================================================================================
+# Most VPN providers (IVPN, Mullvad, NordVPN, Proton VPN, Surfshark, Windscribe, ...) offer "manual setup"
+# WireGuard configs per location. Save one under ~/.config/porthole/secrets/ and point to it.
+# The desktop app runs these in-process; the CLI runs them in a gluetun container.
+[profile.th]
+type = "gluetun"
+provider = "custom"
+vpn = "wireguard"
+wg_conf = "secrets/th-bkk.conf"
+port = 8891
+tz = "Asia/Bangkok"
+expect_country = "TH"
+
+# Your own WireGuard server (e.g. wg-easy on a VPS) works the same way.
+# [profile.de]
+# type = "gluetun"
+# provider = "custom"
+# wg_conf = "secrets/de-fra.conf"
+# port = 8892
+# tz = "Europe/Berlin"
+# expect_country = "DE"
+# env = { WIREGUARD_MTU = "1380" }       # extra gluetun env if needed
+
+# =====================================================================================
+# 3. A VPN provider by country, using gluetun's built-in server list (CLI + Docker only)
+# =====================================================================================
+# Convenient, but gluetun's lists can go stale; prefer a .conf (section 2) if a location won't connect.
+[profile.uk]
+type = "gluetun"
+provider = "mullvad"                     # any gluetun provider: ivpn, nordvpn, protonvpn, surfshark, windscribe, ...
+vpn = "wireguard"                        # or "openvpn"
+countries = "United Kingdom"             # gluetun SERVER_COUNTRIES; also cities / hostnames / regions
+env_file = "secrets/vpn.env"             # see secrets/vpn.env.example
+port = 8893
+tz = "Europe/London"
+expect_country = "GB"
+
+[profile.jp]
+type = "gluetun"
+provider = "mullvad"
+vpn = "wireguard"
+cities = "Tokyo"
+env_file = "secrets/vpn.env"
+port = 8894
+tz = "Asia/Tokyo"
+expect_country = "JP"
+
+# =====================================================================================
+# Safari mode
+# =====================================================================================
+# Safari can only use the system proxy, so Porthole sets a PAC that routes just one list of
+# domains through the profile; everything else stays DIRECT. `--all` routes everything, and
+# `porthole launch <p> -b safari --sites <set>` picks another list for one session.
+# Chrome, Brave and Firefox always send their whole window through the profile and ignore these lists.
+[safari]
+pac_set = "streaming"                    # default list; a profile's own pac_set wins
+# pac_port = 18080
+# services = ["Wi-Fi"]                   # default: the network service owning the default route
+
+# Include each site's CDN and API domains, not just the main one. Subdomains match automatically.
+[pac_sets]
+# Video and music catalogues and HD playback that differ by country.
+streaming = [
+  "ipinfo.io",                           # handy for checking the exit from Safari
+  "netflix.com", "netflix.net", "nflxvideo.net", "nflximg.net", "nflximg.com", "nflxext.com", "nflxso.net",
+  "primevideo.com", "amazonvideo.com", "aiv-cdn.net", "aiv-delivery.net", "media-amazon.com",
+  "disneyplus.com", "disney-plus.net", "bamgrid.com", "dssott.com",
+  "hotstar.com", "hotstarext.com",
+  "hulu.com", "hulustream.com", "max.com", "hbomax.com",
+  "bbc.co.uk", "bbci.co.uk", "tv.apple.com",
+  "spotify.com", "scdn.co", "spotifycdn.com",
+]
+
+# Leak and exit checks: open these in Safari to confirm what the region sees.
+check = ["ipinfo.io", "ip-api.com", "browserleaks.com", "dnsleaktest.com", "whatismyipaddress.com"]
+
+# Regional prices: flights, hotels and shops often quote differently by visitor country.
+travel = [
+  "skyscanner.net", "skyscanner.com", "kayak.com", "expedia.com", "booking.com", "agoda.com",
+  "airbnb.com", "trip.com",
+]
+
+# Localised search results and ads, e.g. checking how a site ranks or which ads run in a market.
+search = ["google.com", "bing.com", "duckduckgo.com", "youtube.com"]
+
+# Sites that block or redirect foreign visitors while you travel. Replace with your own.
+home = ["mybank.example", "tax.gov.example", "myisp.example"]
+
+# Dashboards and admin panels that only accept the office IP. Replace with your own.
+work = ["grafana.example.com", "admin.example.com", "internal.example.com"]
