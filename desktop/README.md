@@ -21,7 +21,7 @@ It runs tunnels itself, with no Docker:
 
 - **macOS:** everything, including Safari mode.
 - **Windows:** Chrome, Brave and Firefox. The per-profile timezone isn't applied yet (Chromium ignores `TZ` on Windows), and the "profile already open through another region" check is skipped.
-- **Linux:** Chrome/Chromium, Brave and Firefox. Needs WebKitGTK 4.1 (`libwebkit2gtk-4.1-0`) and, for the tray icon, a desktop with StatusNotifier/AppIndicator support.
+- **Linux:** Chrome/Chromium, Brave and Firefox. Needs GTK 4 and WebKitGTK 6.0 (`libgtk-4-1`, `libwebkitgtk-6.0-4`) and, for the tray icon, a desktop with StatusNotifier/AppIndicator support.
 
 ## Build
 

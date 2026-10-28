@@ -35,7 +35,7 @@ Both read the same `~/.config/porthole/profiles.toml`, so you can switch freely.
 **Desktop app:** download the installer for your OS from [Releases](https://github.com/ashutosh091/porthole/releases/latest):
 - macOS (Apple silicon and Intel): [`Porthole-macos.dmg`](https://github.com/ashutosh091/porthole/releases/latest/download/Porthole-macos.dmg), then drag Porthole to Applications.
 - Windows: [`Porthole-windows-amd64-setup.exe`](https://github.com/ashutosh091/porthole/releases/latest/download/Porthole-windows-amd64-setup.exe).
-- Linux: [`Porthole-linux-amd64.AppImage`](https://github.com/ashutosh091/porthole/releases/latest/download/Porthole-linux-amd64.AppImage), or the `.deb` / `.rpm` from the release page. Needs WebKitGTK 4.1.
+- Linux: [`Porthole-linux-amd64.AppImage`](https://github.com/ashutosh091/porthole/releases/latest/download/Porthole-linux-amd64.AppImage), or the `.deb` / `.rpm` from the release page. Needs GTK 4 and WebKitGTK 6.0 (Ubuntu 24.04+, Fedora 39+ or similar).
 
 **CLI (macOS, Python 3.11+, no packages to install):**
 

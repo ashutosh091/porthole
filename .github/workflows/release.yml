@@ -53,6 +53,12 @@ jobs:
           echo "VERSION=$v" >> "$GITHUB_ENV"
           ./build/set-version.sh "$v"
 
+      - name: Install Linux build dependencies
+        if: matrix.target == 'linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential pkg-config libgtk-4-dev libwebkitgtk-6.0-dev libfuse2t64 file rpm
+
       - name: Install Wails
         run: go install github.com/wailsapp/wails/v3/cmd/wails3@${{ env.WAILS_VERSION }}
 
@@ -84,12 +90,6 @@ jobs:
           mv bin/porthole-desktop-amd64-installer.exe "bin/Porthole-windows-amd64-setup.exe"
 
       # ---- Linux: AppImage, deb, rpm ----
-      - name: Install Linux build dependencies
-        if: matrix.target == 'linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y build-essential pkg-config libgtk-3-dev libwebkit2gtk-4.1-dev libfuse2t64 file rpm
-
       - name: Build packages (Linux)
         if: matrix.target == 'linux'
         run: |
