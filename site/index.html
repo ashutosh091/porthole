@@ -281,10 +281,10 @@ porthole launch us -b safari --sites travel</pre>
         <li><b>Plain text config</b> at <code>~/.config/porthole/profiles.toml</code>.</li>
       </ul>
     </div>
-    <pre><span class="c"># install the CLI</span>
-curl -fsSLo ~/.local/bin/porthole \
-  https://github.com/ashutosh091/porthole/releases/latest/download/porthole
-chmod +x ~/.local/bin/porthole
+    <pre><span class="c"># install with Homebrew</span>
+brew tap ashutosh091/tap && brew trust ashutosh091/tap
+brew install ashutosh091/tap/porthole
+brew install --cask ashutosh091/tap/porthole   <span class="c"># app</span>
 
 porthole list
 porthole launch uk                 <span class="c"># Chrome via the UK</span>
