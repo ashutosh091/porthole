@@ -25,7 +25,7 @@ var countryTZ = map[string]string{
 var nameRe = regexp.MustCompile(`[^a-z0-9-]+`)
 
 // ImportConf copies a WireGuard .conf into the config's secrets folder and adds a profile for it.
-// Country-city names (th-bkk.conf, us-nyc.conf, as many providers use) give the country and timezone; both stay editable.
+// Country-city names (uk-lon.conf, us-nyc.conf, as many providers use) give the country and timezone; both stay editable.
 func ImportConf(cfg *Config, src string) (*Profile, error) {
 	if _, err := ParseWGConf(src); err != nil {
 		return nil, err

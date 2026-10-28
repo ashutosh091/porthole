@@ -37,7 +37,7 @@ expect_country = "US"                    # launch refuses to open the browser if
 # type = "ssh"
 # host = "home-pi"                       # e.g. a Raspberry Pi with port forwarding or Tailscale
 # port = 1083
-# expect_country = "IN"
+# expect_country = "US"
 # pac_set = "home"
 
 # =====================================================================================
@@ -46,14 +46,14 @@ expect_country = "US"                    # launch refuses to open the browser if
 # Most VPN providers (IVPN, Mullvad, NordVPN, Proton VPN, Surfshark, Windscribe, ...) offer "manual setup"
 # WireGuard configs per location. Save one under ~/.config/porthole/secrets/ and point to it.
 # The desktop app runs these in-process; the CLI runs them in a gluetun container.
-[profile.th]
+[profile.uk]
 type = "gluetun"
 provider = "custom"
 vpn = "wireguard"
-wg_conf = "secrets/th-bkk.conf"
+wg_conf = "secrets/uk-lon.conf"
 port = 8891
-tz = "Asia/Bangkok"
-expect_country = "TH"
+tz = "Europe/London"
+expect_country = "GB"
 
 # Your own WireGuard server (e.g. wg-easy on a VPS) works the same way.
 # [profile.de]
@@ -69,25 +69,25 @@ expect_country = "TH"
 # 3. A VPN provider by country, using gluetun's built-in server list (CLI + Docker only)
 # =====================================================================================
 # Convenient, but gluetun's lists can go stale; prefer a .conf (section 2) if a location won't connect.
-[profile.uk]
+[profile.ca]
 type = "gluetun"
 provider = "mullvad"                     # any gluetun provider: ivpn, nordvpn, protonvpn, surfshark, windscribe, ...
 vpn = "wireguard"                        # or "openvpn"
-countries = "United Kingdom"             # gluetun SERVER_COUNTRIES; also cities / hostnames / regions
+countries = "Canada"                     # gluetun SERVER_COUNTRIES; also cities / hostnames / regions
 env_file = "secrets/vpn.env"             # see secrets/vpn.env.example
 port = 8893
-tz = "Europe/London"
-expect_country = "GB"
+tz = "America/Toronto"
+expect_country = "CA"
 
-[profile.jp]
+[profile.fr]
 type = "gluetun"
 provider = "mullvad"
 vpn = "wireguard"
-cities = "Tokyo"
+cities = "Paris"
 env_file = "secrets/vpn.env"
 port = 8894
-tz = "Asia/Tokyo"
-expect_country = "JP"
+tz = "Europe/Paris"
+expect_country = "FR"
 
 # =====================================================================================
 # Safari mode

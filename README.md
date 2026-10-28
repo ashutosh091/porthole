@@ -59,7 +59,7 @@ Then edit `~/.config/porthole/profiles.toml`. Profiles that use gluetun need Doc
 | WireGuard `.conf` | `type = "gluetun"`, `provider = "custom"`, `wg_conf = "secrets/<file>.conf"` | desktop: userspace WireGuard; CLI: gluetun |
 | VPN provider by country | `type = "gluetun"`, `provider = "<name>"`, `countries = "..."`, `env_file` | gluetun's built-in server list (CLI only) |
 
-- **WireGuard configs:** most providers (IVPN, Mullvad, NordVPN, Proton VPN, Surfshark, Windscribe, …) offer per-location WireGuard configs under "manual setup". Save each one in `~/.config/porthole/secrets/` (`chmod 600`). In the desktop app, **Import .conf** does this for you, and names like `th-bkk.conf` fill in the country and timezone. On every connect, Porthole reads the keys and endpoint and looks up the endpoint's current IP.
+- **WireGuard configs:** most providers (IVPN, Mullvad, NordVPN, Proton VPN, Surfshark, Windscribe, …) offer per-location WireGuard configs under "manual setup". Save each one in `~/.config/porthole/secrets/` (`chmod 600`). In the desktop app, **Import .conf** does this for you, and names like `uk-lon.conf` or `us-nyc.conf` fill in the country and timezone. On every connect, Porthole reads the keys and endpoint and looks up the endpoint's current IP.
 - **Prefer a `.conf` over `countries = ...`:** gluetun's built-in server lists can go stale, so a by-country profile may never connect.
 - **SSH servers:** use a `~/.ssh/config` alias or a host plus `ssh_args`. The tunnel runs with `BatchMode`, so the key must load without a prompt (ssh-agent or an unencrypted key).
 - **`expect_country`:** before opening the browser, Porthole checks the exit on ipinfo.io and refuses to open it if the country differs. Some VPN locations are *virtual* (the IP is registered in one country, the server sits in another), and geo-IP databases disagree about them; when ipinfo.io disagrees, Porthole asks ip-api.com too and, if that matches, warns and opens anyway.
@@ -71,7 +71,7 @@ Then edit `~/.config/porthole/profiles.toml`. Profiles that use gluetun need Doc
 porthole list                         # profiles and where they exit
 porthole status                       # which tunnels are up, exit IP and country
 porthole launch us                    # Chrome through "us" (starts the tunnel if needed)
-porthole launch th -b firefox https://example.com
+porthole launch uk -b firefox https://example.com
 porthole launch uk -b safari          # Safari, streaming list only (see below)
 porthole launch uk -b safari --sites travel
 porthole check us                     # show the exit again
@@ -106,8 +106,8 @@ chrome_profile = "main"
 **Give one region its own logins while the rest share "main":** set a different name on that region. A region's own value beats `[defaults]`:
 
 ```toml
-[profile.kr]
-chrome_profile = "kr"       # ~/.porthole/shared/kr/ - kept apart
+[profile.uk]
+chrome_profile = "uk"       # ~/.porthole/shared/uk/ - UK logins kept apart
 ```
 
 **Share among a few regions only:** leave `[defaults]` without `chrome_profile` and name a group on the regions that should share:
@@ -116,18 +116,18 @@ chrome_profile = "kr"       # ~/.porthole/shared/kr/ - kept apart
 [profile.us]
 chrome_profile = "work"
 
-[profile.uk]
-chrome_profile = "work"     # us and uk share; every other region keeps its own data
+[profile.ca]
+chrome_profile = "work"     # us and ca share; every other region keeps its own data
 ```
 
 - **Start fresh:** pick an unused name. The folder is created empty on first launch, so you sign in once.
 - **Keep an existing profile's logins under a new name:** quit that browser, then copy its folder. This works on the same machine and user, because the browser's encryption key lives in the OS keychain, not in the folder:
   ```bash
-  mkdir -p ~/.porthole/shared/kr-old && cp -R ~/.porthole/profiles/kr/chrome ~/.porthole/shared/kr-old/
+  mkdir -p ~/.porthole/shared/uk-old && cp -R ~/.porthole/profiles/uk/chrome ~/.porthole/shared/uk-old/
   ```
 - **Reset a profile** (log out of everything): quit the browser and delete its folder, e.g. `rm -rf ~/.porthole/shared/main/chrome`.
 - **Renaming a region** in the desktop app moves its own data folder too, so logins survive.
-- **One region at a time per shared profile.** A browser keeps the proxy it started with. If "main" is open through `kr`, launching `th` is refused until you quit that window; otherwise the new window would quietly go out through Korea. To have two regions open side by side, give them different profile names.
+- **One region at a time per shared profile.** A browser keeps the proxy it started with. If "main" is open through `uk`, launching `us` is refused until you quit that window; otherwise the new window would quietly go out through the UK. To have two regions open side by side, give them different profile names.
 - **Sites notice:** the same account signing in from different countries may be flagged by Google, streaming services or banks. Use separate profiles for accounts you don't want linked across regions.
 
 ## Safari

@@ -10,7 +10,7 @@ It runs tunnels itself, with no Docker:
 
 ## Use
 
-- **Import .conf** picks downloaded WireGuard configs (from your VPN provider or your own server) and copies them into `~/.config/porthole/secrets/`. Names like `th-bkk.conf` fill in the country (TH) and timezone.
+- **Import .conf** picks downloaded WireGuard configs (from your VPN provider or your own server) and copies them into `~/.config/porthole/secrets/`. Names like `uk-lon.conf` or `us-nyc.conf` fill in the country (GB, US) and timezone.
 - **Add server** adds an SSH exit: a host or `~/.ssh/config` alias, an optional user and key.
 - Each profile has a button per installed browser (Chrome, Brave, Firefox, and Safari on macOS). Each opens that browser through the profile, connecting first if needed, after checking the exit country against `expect_country`.
 - **Safari** (macOS) sets a system PAC for the profile's `pac_set` domains and restarts Safari. The previous proxy settings come back when Safari quits, when you press Stop, or when the app quits. The ⋯ menu has **Safari all traffic** to route everything.
@@ -30,7 +30,7 @@ go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0
 cd desktop
 wails3 package            # macOS: bin/porthole-desktop.app (ad-hoc signed); Windows: NSIS installer; Linux: AppImage, deb, rpm
 wails3 dev                # live-reload development
-go test ./internal/core   # offline tests; PORTHOLE_LIVE=th,us go test -run Live ./internal/core hits real exits
+go test ./internal/core   # offline tests; PORTHOLE_LIVE=uk,us go test -run Live ./internal/core hits real exits
 ```
 
 Releases are built by [`.github/workflows/release.yml`](../.github/workflows/release.yml) when a `v*` tag is pushed.
