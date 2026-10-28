@@ -37,7 +37,7 @@ Both read the same `~/.config/porthole/profiles.toml`, so you can switch freely.
 ```bash
 brew tap ashutosh091/tap && brew trust ashutosh091/tap   # Homebrew 7+ asks you to trust third-party taps
 brew install ashutosh091/tap/porthole                    # CLI
-brew install --cask ashutosh091/tap/porthole             # desktop app
+brew install --cask ashutosh091/tap/porthole-app         # desktop app
 ```
 
 **Desktop app:** download the installer for your OS from [Releases](https://github.com/ashutosh091/porthole/releases/latest):
